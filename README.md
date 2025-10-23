@@ -21,11 +21,13 @@ Run `mcp-graphql` with the correct endpoint, it will automatically try to intros
 | `ALLOW_MUTATIONS` | Enable mutation operations (disabled by default) | `false` |
 | `NAME` | Name of the MCP server | `mcp-graphql` |
 | `SCHEMA` | Path to a local GraphQL schema file or URL (optional) | - |
+| `TRANSPORT` | Transport protocol: `stdio`, `streamable-http`, or `sse` | `stdio` |
+| `PORT` | Port for HTTP transports (streamable-http, sse) | `3000` |
 
 ### Examples
 
 ```bash
-# Basic usage with a local GraphQL server
+# Basic usage with a local GraphQL server (stdio transport)
 ENDPOINT=http://localhost:3000/graphql npx mcp-graphql
 
 # Using with custom headers
@@ -39,6 +41,12 @@ ENDPOINT=http://localhost:3000/graphql SCHEMA=./schema.graphql npx mcp-graphql
 
 # Using a schema file hosted at a URL
 ENDPOINT=http://localhost:3000/graphql SCHEMA=https://example.com/schema.graphql npx mcp-graphql
+
+# Using streamable-http transport
+ENDPOINT=http://localhost:3000/graphql TRANSPORT=streamable-http PORT=8080 npx mcp-graphql
+
+# Using SSE transport (deprecated)
+ENDPOINT=http://localhost:3000/graphql TRANSPORT=sse PORT=8080 npx mcp-graphql
 ```
 
 ## Resources
@@ -74,7 +82,42 @@ It can be manually installed to Claude:
             "command": "npx",
             "args": ["mcp-graphql"],
             "env": {
-                "ENDPOINT": "http://localhost:3000/graphql"
+                "ENDPOINT": "http://localhost:3000/graphql",
+                "TRANSPORT": "stdio"
+            }
+        }
+    }
+```
+
+## Transport Options
+
+The server supports multiple transport protocols:
+
+- **stdio** (default): Standard input/output transport for local MCP clients
+- **streamable-http**: Modern HTTP transport with session management support
+- **sse**: Server-Sent Events transport (deprecated, for backwards compatibility)
+
+### Transport Configuration
+
+- `stdio`: No additional configuration needed
+- `streamable-http`: Set `TRANSPORT=streamable-http` and optionally `PORT` (default: 3000)
+- `sse`: Set `TRANSPORT=sse` and optionally `PORT` (default: 3000)
+
+For HTTP transports, the server will start an Express.js web server and listen for MCP requests on the specified port.
+}
+```
+
+For HTTP transports, configure the client to connect to the appropriate endpoint:
+```json
+{
+    "mcpServers": {
+        "mcp-graphql": {
+            "command": "npx",
+            "args": ["mcp-graphql"],
+            "env": {
+                "ENDPOINT": "http://localhost:3000/graphql",
+                "TRANSPORT": "streamable-http",
+                "PORT": "8080"
             }
         }
     }

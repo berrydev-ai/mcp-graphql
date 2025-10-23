@@ -2,6 +2,9 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import express from "express";
 import { parse } from "graphql/language";
 import { z } from "zod";
 import { checkDeprecatedArguments } from "./helpers/deprecation.js";
@@ -33,6 +36,8 @@ const EnvSchema = z.object({
 			}
 		}),
 	SCHEMA: z.string().optional(),
+	TRANSPORT: z.enum(["stdio", "streamable-http", "sse"]).default("stdio"),
+	PORT: z.string().default("3000").transform((val) => parseInt(val, 10)),
 });
 
 const env = EnvSchema.parse(process.env);
@@ -215,12 +220,100 @@ server.tool(
 );
 
 async function main() {
-	const transport = new StdioServerTransport();
-	await server.connect(transport);
+	let transport;
 
-	console.error(
-		`Started graphql mcp server ${env.NAME} for endpoint: ${env.ENDPOINT}`,
-	);
+	switch (env.TRANSPORT) {
+		case "stdio":
+			transport = new StdioServerTransport();
+			await server.connect(transport);
+			console.error(
+				`Started graphql mcp server ${env.NAME} for endpoint: ${env.ENDPOINT} using stdio transport`,
+			);
+			break;
+
+		case "streamable-http":
+			const app = express();
+			app.use(express.json());
+
+			app.post('/mcp', async (req, res) => {
+				try {
+					const transport = new StreamableHTTPServerTransport({
+						sessionIdGenerator: undefined,
+						enableJsonResponse: true
+					});
+
+					res.on('close', () => {
+						transport.close();
+					});
+
+					await server.connect(transport);
+					await transport.handleRequest(req, res, req.body);
+				} catch (error) {
+					console.error('Error handling MCP request:', error);
+					if (!res.headersSent) {
+						res.status(500).json({
+							jsonrpc: '2.0',
+							error: {
+								code: -32603,
+								message: 'Internal server error'
+							},
+							id: null
+						});
+					}
+				}
+			});
+
+			app.listen(env.PORT, () => {
+				console.error(
+					`Started graphql mcp server ${env.NAME} for endpoint: ${env.ENDPOINT} using streamable-http transport on port ${env.PORT}`,
+				);
+			}).on('error', error => {
+				console.error('Server error:', error);
+				process.exit(1);
+			});
+			break;
+
+		case "sse":
+			const sseApp = express();
+			sseApp.use(express.json());
+
+			// Store transports for SSE sessions
+			const sseTransports: { [sessionId: string]: SSEServerTransport } = {};
+
+			sseApp.get('/sse', async (req, res) => {
+				const transport = new SSEServerTransport('/messages', res);
+				sseTransports[transport.sessionId] = transport;
+
+				res.on('close', () => {
+					delete sseTransports[transport.sessionId];
+				});
+
+				await server.connect(transport);
+			});
+
+			sseApp.post('/messages', async (req, res) => {
+				const sessionId = req.query.sessionId as string;
+				const transport = sseTransports[sessionId];
+				if (transport) {
+					await transport.handlePostMessage(req, res, req.body);
+				} else {
+					res.status(400).send('No transport found for sessionId');
+				}
+			});
+
+			sseApp.listen(env.PORT, () => {
+				console.error(
+					`Started graphql mcp server ${env.NAME} for endpoint: ${env.ENDPOINT} using sse transport on port ${env.PORT}`,
+				);
+			}).on('error', error => {
+				console.error('Server error:', error);
+				process.exit(1);
+			});
+			break;
+
+		default:
+			throw new Error(`Unsupported transport: ${env.TRANSPORT}`);
+	}
 }
 
 main().catch((error) => {
